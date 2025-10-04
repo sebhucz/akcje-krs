@@ -65,14 +65,14 @@ def get_full_record(krs_number):
         pass
     return None
 
-# NOWA WERSJA FUNKCJI ANALIZUJĄCEJ - ZGODNA Z TWOJĄ LOGIKĄ
+# ✅ WŁAŚCIWA WERSJA FUNKCJI ANALIZUJĄCEJ - ZGODNA Z TWOJĄ LOGIKĄ
 def analyze_record_for_capital_change(record, start_date, end_date):
     """
-    Analizuje odpis zgodnie z nową logiką: znajduje ostatni wpis i sprawdza,
+    Analizuje odpis zgodnie z logiką: znajduje ostatni wpis i sprawdza,
     czy dotyczył on zmiany kapitału.
     """
     try:
-        # Bezpieczne pobranie potrzebnych danych
+        # Bezpieczne pobranie potrzebnych danych z pliku JSON
         entry_history = record.get('odpis', {}).get('naglowekP', {}).get('wpis', [])
         dane_dzial1 = record.get('dane', {}).get('dzial1', {})
         capital_history = dane_dzial1.get('kapital', {}).get('wysokoscKapitaluZakladowego', [])
@@ -80,28 +80,28 @@ def analyze_record_for_capital_change(record, start_date, end_date):
         if not entry_history:
             return None
 
-        # KROK 1: Znajdź ostatni wpis w historii spółki (o najwyższym numerze)
+        # KROK 1 z Twojej logiki: Znajdź ostatni wpis w historii spółki (o najwyższym numerze)
         last_entry = max(entry_history, key=lambda e: int(e.get('numerWpisu', 0)))
         last_entry_number = int(last_entry.get('numerWpisu', 0))
 
         if last_entry_number == 0:
             return None
 
-        # KROK 2: Sprawdź, czy data tego ostatniego wpisu mieści się w zadanym przedziale
+        # KROK 2 z Twojej logiki: Sprawdź, czy data ostatniego wpisu mieści się w zadanym przedziale
         date_of_change = datetime.strptime(last_entry['dataWpisu'], "%d.%m.%Y").date()
 
         if not (start_date <= date_of_change <= end_date):
             # Ostatnia zmiana jest poza naszym oknem czasowym, więc ją ignorujemy.
             return None
         
-        # KROK 3: Sprawdź, czy ostatni wpis faktycznie zmienił kapitał zakładowy
-        # Szukamy w historii kapitału wpisu, który został wprowadzony przez ten ostatni wpis z KRS.
+        # KROK 3 z Twojej logiki: Sprawdź, czy ostatni wpis faktycznie zmienił kapitał zakładowy
+        # Szukamy w historii kapitału rekordu, który został wprowadzony przez ten ostatni wpis z KRS.
         capital_change_entry = next((
             c for c in capital_history 
             if int(c.get('nrWpisuWprow', -1)) == last_entry_number
         ), None)
 
-        # KROK 4: Jeśli tak, zbierz dane do raportu. Jeśli nie, zignoruj.
+        # KROK 4 z Twojej logiki: Jeśli tak, zbierz dane do raportu. Jeśli nie, zignoruj.
         if capital_change_entry:
             # Sukces! Ostatnia zmiana dotyczyła kapitału. Zbieramy dane.
             name_history = dane_dzial1.get('danePodmiotu', {}).get('nazwa', [])
