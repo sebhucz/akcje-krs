@@ -1,4 +1,4 @@
-e# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Skrypt: Monitor zmian kapitału zakładowego w KRS (okno: ostatnie 30 dni)
 Autor: (Ty 😊)
