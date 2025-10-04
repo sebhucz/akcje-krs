@@ -1,0 +1,46 @@
+# Nazwa całego procesu (workflow)
+name: Tygodniowy monitoring KRS
+
+# Wyzwalacze (Triggers) - czyli kiedy ten proces ma się uruchomić
+on:
+  # Uruchomienie według harmonogramu (cron)
+  # Ta linijka oznacza "uruchom w każdą niedzielę o 23:00 czasu UTC"
+  schedule:
+    - cron: '0 23 * * 0'
+    
+  # Umożliwia również ręczne uruchomienie z poziomu zakładki "Actions" na GitHubie
+  workflow_dispatch:
+
+# Definicja zadań (Jobs) do wykonania
+jobs:
+  # Nazwa zadania (może być dowolna)
+  run-krs-monitor:
+    # Określenie systemu operacyjnego, na którym ma działać skrypt
+    runs-on: ubuntu-latest
+
+    # Kroki (Steps), które mają zostać wykonane
+    steps:
+      # Krok 1: Pobranie kodu z Twojego repozytorium
+      - name: Pobierz kod repozytorium
+        uses: actions/checkout@v4
+
+      # Krok 2: Ustawienie środowiska Python
+      - name: Ustaw Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      # Krok 3: Instalacja potrzebnych bibliotek (z pliku requirements.txt)
+      - name: Zainstaluj zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      # Krok 4: Uruchomienie Twojego skryptu
+      - name: Uruchom skrypt monitorujący
+        # Tutaj przekazujemy sekrety do skryptu jako zmienne środowiskowe
+        env:
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+        run: python main.py
