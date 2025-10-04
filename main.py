@@ -57,7 +57,7 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "465") or 465)
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER or "")
-EMAIL_SUBJECT = "Zmiany kapitału zakładowego – ostatnie 30 dni"
+EMAIL_SUBJECT = "Ostatnie rejestracje akcji spółek publicznych"
 
 # ------------------------------
 # NARZĘDZIA POMOCNICZE
@@ -238,30 +238,103 @@ def znajdz_zmiany_kapitalu_w_oknie(odpis: dict, data_od: date, data_do: date) ->
 # ------------------------------
 # BUDOWANIE RAPORTU TEKSTOWEGO
 # ------------------------------
-def zbuduj_tresc_raportu(zmiany: list[dict]) -> str:
+def zbuduj_tresc_maila_html(zmiany: list[dict]) -> str:
     """
-    Przyjmuje listę słowników (zmiany z wielu spółek) i składa ją w czytelną treść e-maila.
+    Buduje estetyczną wiadomość HTML:
+    - nagłówek wg wymagań,
+    - krótki wstęp,
+    - tabelę z wynikami (wyróżniona nazwa spółki).
     """
     if not zmiany:
-        return "W badanym okresie nie odnotowano zmian kapitału zakładowego."
+        return """
+        <html><body style="font-family: Arial, Helvetica, sans-serif; color:#111;">
+          <p>Cześć, to ja, skrypt monitorujący zmiany w kapitale zakładowym w spółkach publicznych.</p>
+          <p>W badanym okresie nie odnotowano zmian kapitału zakładowego.</p>
+        </body></html>
+        """
 
-    linie = ["Wykryto zmiany kapitału zakładowego w badanym okresie:\n"]
+    # Prosty, bezpieczny w HTML e-mailach CSS (inline + style w <table>)
+    rows = []
+    for z in zmiany:
+        rows.append(f"""
+          <tr>
+            <td style="padding:10px 12px; border-bottom:1px solid #e9ecef;"><strong>{z['nazwa']}</strong></td>
+            <td style="padding:10px 12px; border-bottom:1px solid #e9ecef;">{z['krs']}</td>
+            <td style="padding:10px 12px; border-bottom:1px solid #e9ecef; text-align:right;">{z.get('poprzedni_kapital', '–')}</td>
+            <td style="padding:10px 12px; border-bottom:1px solid #e9ecef; text-align:right;">{z['nowy_kapital']}</td>
+            <td style="padding:10px 12px; border-bottom:1px solid #e9ecef; white-space:nowrap;">{z['data_zmiany']}</td>
+          </tr>
+        """)
+
+    html = f"""
+    <html>
+      <body style="font-family: Arial, Helvetica, sans-serif; color:#111; line-height:1.45;">
+        <h2 style="margin:0 0 12px 0;">Ostatnie rejestracje akcji spółek publicznych</h2>
+
+        <p>Cześć, to ja, skrypt monitorujący zmiany w kapitale zakładowym w spółkach publicznych.</p>
+        <p>Wykryto zmiany kapitału zakładowego w badanym okresie dla:</p>
+
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+               style="border-collapse:collapse; width:100%; max-width:920px; background:#fff; border:1px solid #e9ecef;">
+          <thead>
+            <tr style="background:#f8f9fa;">
+              <th align="left"  style="padding:10px 12px; border-bottom:1px solid #e9ecef; font-weight:600;">Spółka</th>
+              <th align="left"  style="padding:10px 12px; border-bottom:1px solid #e9ecef; font-weight:600;">KRS</th>
+              <th align="right" style="padding:10px 12px; border-bottom:1px solid #e9ecef; font-weight:600;">Poprzedni kapitał</th>
+              <th align="right" style="padding:10px 12px; border-bottom:1px solid #e9ecef; font-weight:600;">Nowy kapitał</th>
+              <th align="left"  style="padding:10px 12px; border-bottom:1px solid #e9ecef; font-weight:600;">Data zmiany</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(rows)}
+          </tbody>
+        </table>
+
+        <p style="margin-top:16px; color:#555; font-size:12px;">
+          Wiadomość wygenerowana automatycznie – proszę nie odpowiadać.
+        </p>
+      </body>
+    </html>
+    """
+    return html
+
+
+def zbuduj_tresc_maila_text(zmiany: list[dict]) -> str:
+    """
+    Tekstowy fallback (gdy klient pocztowy nie wyświetla HTML).
+    Zostawia tę samą strukturę logiczną, ale bez tabeli.
+    """
+    if not zmiany:
+        return (
+            "Cześć, to ja, skrypt monitorujący zmiany w kapitale zakładowym w spółkach publicznych.\n\n"
+            "W badanym okresie nie odnotowano zmian kapitału zakładowego."
+        )
+
+    linie = [
+        "Ostatnie rejestracje akcji spółek publicznych",
+        "",
+        "Cześć, to ja, skrypt monitorujący zmiany w kapitale zakładowym w spółkach publicznych.",
+        "",
+        "Wykryto zmiany kapitału zakładowego w badanym okresie dla:",
+        ""
+    ]
     for z in zmiany:
         linie.append(
             f"- {z['nazwa']} (KRS {z['krs']}): "
-            f"{z.get('poprzedni_kapital', '–')} → {z['nowy_kapital']} "
+            f"{z.get('poprzedni_kapital','–')} -> {z['nowy_kapital']} "
             f"dnia {z['data_zmiany']}"
         )
     return "\n".join(linie)
 
+
 # ------------------------------
 # WYSYŁKA E-MAIL
 # ------------------------------
-def wyslij_email_do_odbiorcow(tresc: str, odbiorcy: list[str]) -> bool:
+def wyslij_email_do_odbiorcow(tresc_html: str, tresc_text: str, odbiorcy: list[str]) -> bool:
     """
-    Wysyła e-mail do wielu odbiorców (UDW). Wrażliwe dane (host, user, hasło)
-    pobieramy ze zmiennych środowiskowych.
-    Zwraca True przy sukcesie, False przy błędzie.
+    Wysyła e-mail jako multipart/alternative:
+      - część 'plain text' (fallback),
+      - część 'text/html' (docelowa, z tabelą).
     """
     if not odbiorcy:
         print("   -> ⚠️ Brak odbiorców – nie wysyłam e-maila.")
@@ -270,15 +343,18 @@ def wyslij_email_do_odbiorcow(tresc: str, odbiorcy: list[str]) -> bool:
         print("   -> ⚠️ Brak kompletu zmiennych SMTP – nie wysyłam e-maila.")
         return False
 
-    msg = MIMEMultipart()
+    msg = MIMEMultipart("alternative")
     msg["From"] = EMAIL_FROM
-    msg["To"] = ", ".join(odbiorcy)  # adresy w polu 'Do:' (jeśli wolisz UDW – przenieś do BCC)
+    msg["To"] = ", ".join(odbiorcy)
     msg["Subject"] = EMAIL_SUBJECT
 
-    msg.attach(MIMEText(tresc, "plain", "utf-8"))
+    # Najpierw plain text (musi być pierwszy), potem HTML
+    part_text = MIMEText(tresc_text, "plain", "utf-8")
+    part_html = MIMEText(tresc_html, "html", "utf-8")
+    msg.attach(part_text)
+    msg.attach(part_html)
 
     try:
-        # Dwie ścieżki: SSL (465) lub STARTTLS (np. 587)
         if SMTP_PORT == 465:
             context = ssl.create_default_context()
             with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
@@ -296,6 +372,7 @@ def wyslij_email_do_odbiorcow(tresc: str, odbiorcy: list[str]) -> bool:
     except Exception as e:
         print(f"❌ Błąd wysyłki e-mail: {e}")
         return False
+
 
 # ------------------------------
 # GŁÓWNY PRZEBIEG
@@ -330,13 +407,17 @@ def main():
         # Delikatny odstęp między zapytaniami, żeby nie „maltretować” API
         time.sleep(0.4)
 
-    if wszystkie_zmiany:
-        # Grupowe zestawienie i e-mail
-        tresc = zbuduj_tresc_raportu(wszystkie_zmiany)
-        print("\n📋 Podsumowanie zmian:\n" + tresc + "\n")
-        wyslij_email_do_odbiorcow(tresc, odbiorcy)
-    else:
-        print("\n✅ Na Twojej liście nie znaleziono żadnych spółek ze zmianą kapitału zakładowego w badanym okresie.")
+if wszystkie_zmiany:
+    tresc_html = zbuduj_tresc_maila_html(wszystkie_zmiany)
+    tresc_text = zbuduj_tresc_maila_text(wszystkie_zmiany)
+
+    # Podgląd w logu (plain text – żeby log był czytelny)
+    print("\n📋 Podsumowanie zmian (tekst):\n" + tresc_text + "\n")
+
+    wyslij_email_do_odbiorcow(tresc_html, tresc_text, odbiorcy)
+else:
+    print("\n✅ Na Twojej liście nie znaleziono żadnych spółek ze zmianą kapitału zakładowego w badanym okresie.")
+
 
     print("🏁 Skrypt zakończył pracę.")
 
