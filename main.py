@@ -61,49 +61,47 @@ def pobierz_pelny_odpis(numer_krs):
         pass
     return None
 
+# OSTATECZNA, MAKSYMALNIE UPROSZCZONA WERSJA FUNKCJI ANALIZUJĄCEJ
 def przeanalizuj_odpis_pod_katem_zmiany_kapitalu(odpis, data_poczatkowa, data_koncowa):
     """
-    Analizuje odpis wg ostatecznej logiki: znajduje najnowszą zmianę w historii kapitału
-    i na tej podstawie weryfikuje datę.
+    Analizuje odpis w poszukiwaniu zmiany kapitału, używając maksymalnie uproszczonej i bezpośredniej logiki.
     """
     try:
         historia_wpisow = odpis.get('odpis', {}).get('naglowekP', {}).get('wpis', [])
-        dane_dzial1 = odpis.get('dane', {}).get('dzial1', {})
-        historia_kapitalu = dane_dzial1.get('kapital', {}).get('wysokoscKapitaluZakladowego', [])
-        
-        if not historia_kapitalu or len(historia_kapitalu) < 2:
+        historia_kapitalu = odpis.get('dane', {}).get('dzial1', {}).get('kapital', {}).get('wysokoscKapitaluZakladowego', [])
+
+        if len(historia_kapitalu) < 2:
             return None
 
-        wpisy_wprowadzone = [k for k in historia_kapitalu if 'nrWpisuWprow' in k]
+        # KROK 1: Znajdź wpis o najnowszym kapitale (z najwyższym numerem wprowadzenia)
+        wpisy_wprowadzone = [k for k in historia_kapitalu if k.get('nrWpisuWprow')]
         if not wpisy_wprowadzone:
             return None
-            
-        ostatnia_zmiana_kapitalu = max(wpisy_wprowadzone, key=lambda k: int(k.get('nrWpisuWprow', 0)))
-        numer_wpisu_zmieniajacego = int(ostatnia_zmiana_kapitalu.get('nrWpisuWprow', 0))
+        
+        wpis_nowego_kapitalu = max(wpisy_wprowadzone, key=lambda k: int(k['nrWpisuWprow']))
+        numer_wpisu_zmiany = int(wpis_nowego_kapitalu['nrWpisuWprow'])
 
-        if numer_wpisu_zmieniajacego == 0:
-            return None
-
-        wpis_sadowy = next((w for w in historia_wpisow if int(w.get('numerWpisu', -1)) == numer_wpisu_zmieniajacego), None)
+        # KROK 2: Znajdź datę tej zmiany
+        wpis_sadowy = next((w for w in historia_wpisow if int(w.get('numerWpisu')) == numer_wpisu_zmiany), None)
         if not wpis_sadowy:
             return None
 
+        # KROK 3: Sprawdź, czy data zmiany mieści się w okresie
         data_zmiany = datetime.strptime(wpis_sadowy['dataWpisu'], "%d.%m.%Y").date()
-
         if not (data_poczatkowa <= data_zmiany <= data_koncowa):
             return None
+
+        # KROK 4: Skoro data się zgadza, zbierz dane
+        nowy_kapital = wpis_nowego_kapitalu.get('wartosc')
         
-        nowy_kapital = ostatnia_zmiana_kapitalu.get('wartosc', 'Brak danych')
-
-        starsze_kapitaly = [k for k in wpisy_wprowadzone if int(k.get('nrWpisuWprow', 0)) < numer_wpisu_zmieniajacego]
-        poprzedni_kapital = "Brak danych"
-        if starsze_kapitaly:
-            ostatni_poprzedni_kapital = sorted(starsze_kapitaly, key=lambda k: int(k.get('nrWpisuWprow', 0)), reverse=True)[0]
-            poprzedni_kapital = ostatni_poprzedni_kapital.get('wartosc', 'Brak danych')
-
-        historia_nazw = dane_dzial1.get('danePodmiotu', {}).get('nazwa', [])
+        # Znajdź poprzedni kapitał
+        wpis_poprzedniego_kapitalu = next((k for k in historia_kapitalu if k.get('nrWpisuWykr') and int(k.get('nrWpisuWykr')) == numer_wpisu_zmiany), None)
+        poprzedni_kapital = wpis_poprzedniego_kapitalu.get('wartosc') if wpis_poprzedniego_kapitalu else "Brak danych"
+        
+        # Znajdź aktualną nazwę
+        historia_nazw = odpis.get('dane', {}).get('dzial1', {}).get('danePodmiotu', {}).get('nazwa', [])
         aktualna_nazwa_info = next((nazwa for nazwa in historia_nazw if 'nrWpisuWykr' not in nazwa), None)
-        nazwa_firmy = aktualna_nazwa_info['nazwa'] if aktualna_nazwa_info else "Nie udało się ustalić nazwy"
+        nazwa_firmy = aktualna_nazwa_info.get('nazwa') if aktualna_nazwa_info else "Nie udało się ustalić nazwy"
 
         return {
             "nazwa": nazwa_firmy,
@@ -113,11 +111,63 @@ def przeanalizuj_odpis_pod_katem_zmiany_kapitalu(odpis, data_poczatkowa, data_ko
             "poprzedni_kapital": poprzedni_kapital
         }
 
-    except (KeyError, IndexError, TypeError, ValueError) as e:
+    except Exception as e:
+        krs_dla_bledu = odpis.get('odpis', {}).get('naglowekP', {}).get('numerKRS', ' nieznany')
+        print(f"   -> ⚠️ Wystąpił krytyczny błąd podczas analizy KRS {krs_dla_bledu}: {e}")
+        return None# OSTATECZNA, MAKSYMALNIE UPROSZCZONA WERSJA FUNKCJI ANALIZUJĄCEJ
+def przeanalizuj_odpis_pod_katem_zmiany_kapitalu(odpis, data_poczatkowa, data_koncowa):
+    """
+    Analizuje odpis w poszukiwaniu zmiany kapitału, używając maksymalnie uproszczonej i bezpośredniej logiki.
+    """
+    try:
+        historia_wpisow = odpis.get('odpis', {}).get('naglowekP', {}).get('wpis', [])
+        historia_kapitalu = odpis.get('dane', {}).get('dzial1', {}).get('kapital', {}).get('wysokoscKapitaluZakladowego', [])
+
+        if len(historia_kapitalu) < 2:
+            return None
+
+        # KROK 1: Znajdź wpis o najnowszym kapitale (z najwyższym numerem wprowadzenia)
+        wpisy_wprowadzone = [k for k in historia_kapitalu if k.get('nrWpisuWprow')]
+        if not wpisy_wprowadzone:
+            return None
+        
+        wpis_nowego_kapitalu = max(wpisy_wprowadzone, key=lambda k: int(k['nrWpisuWprow']))
+        numer_wpisu_zmiany = int(wpis_nowego_kapitalu['nrWpisuWprow'])
+
+        # KROK 2: Znajdź datę tej zmiany
+        wpis_sadowy = next((w for w in historia_wpisow if int(w.get('numerWpisu')) == numer_wpisu_zmiany), None)
+        if not wpis_sadowy:
+            return None
+
+        # KROK 3: Sprawdź, czy data zmiany mieści się w okresie
+        data_zmiany = datetime.strptime(wpis_sadowy['dataWpisu'], "%d.%m.%Y").date()
+        if not (data_poczatkowa <= data_zmiany <= data_koncowa):
+            return None
+
+        # KROK 4: Skoro data się zgadza, zbierz dane
+        nowy_kapital = wpis_nowego_kapitalu.get('wartosc')
+        
+        # Znajdź poprzedni kapitał
+        wpis_poprzedniego_kapitalu = next((k for k in historia_kapitalu if k.get('nrWpisuWykr') and int(k.get('nrWpisuWykr')) == numer_wpisu_zmiany), None)
+        poprzedni_kapital = wpis_poprzedniego_kapitalu.get('wartosc') if wpis_poprzedniego_kapitalu else "Brak danych"
+        
+        # Znajdź aktualną nazwę
+        historia_nazw = odpis.get('dane', {}).get('dzial1', {}).get('danePodmiotu', {}).get('nazwa', [])
+        aktualna_nazwa_info = next((nazwa for nazwa in historia_nazw if 'nrWpisuWykr' not in nazwa), None)
+        nazwa_firmy = aktualna_nazwa_info.get('nazwa') if aktualna_nazwa_info else "Nie udało się ustalić nazwy"
+
+        return {
+            "nazwa": nazwa_firmy,
+            "krs": odpis.get('odpis', {}).get('naglowekP', {}).get('numerKRS'),
+            "data_zmiany": wpis_sadowy['dataWpisu'],
+            "nowy_kapital": nowy_kapital,
+            "poprzedni_kapital": poprzedni_kapital
+        }
+
+    except Exception as e:
         krs_dla_bledu = odpis.get('odpis', {}).get('naglowekP', {}).get('numerKRS', ' nieznany')
         print(f"   -> ⚠️ Wystąpił krytyczny błąd podczas analizy KRS {krs_dla_bledu}: {e}")
         return None
-    return None
 
 def wyslij_email(tresc_raportu, odbiorcy):
     """Ta funkcja jest odpowiedzialna za wysłanie gotowego raportu e-mailem."""
