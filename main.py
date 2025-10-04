@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Skrypt: Monitor zmian kapitału zakładowego w KRS (okno: ostatnie 30 dni)
-Autor: (Ty 😊)
+Autor: (ja 😊)
 
 Co robi?
 1) Wczytuje listę numerów KRS z pliku 'krs_do_monitorowania.txt'.
