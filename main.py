@@ -61,66 +61,80 @@ def pobierz_pelny_odpis(numer_krs):
         pass
     return None
 
-# WERSJA DIAGNOSTYCZNA - ZASTĄP TĄ FUNKCJĘ W SWOIM PLIKU
+# ✅ OSTATECZNA WERSJA FUNKCJI ANALIZUJĄCEJ, INSPIROWANA KODEM JAVASCRIPT
 def przeanalizuj_odpis_pod_katem_zmiany_kapitalu(odpis, data_poczatkowa, data_koncowa):
     """
-    Analizuje odpis zgodnie z logiką: znajduje ostatni wpis i sprawdza,
-    czy dotyczył on zmiany kapitału. Wersja z dodatkową diagnostyką.
+    Analizuje odpis wg ostatecznej logiki: znajduje najnowszą zmianę w historii kapitału
+    i na tej podstawie weryfikuje datę.
     """
-    print("   -> Uruchomiono analizę odpisu...")
     try:
         historia_wpisow = odpis.get('odpis', {}).get('naglowekP', {}).get('wpis', [])
         dane_dzial1 = odpis.get('dane', {}).get('dzial1', {})
         historia_kapitalu = dane_dzial1.get('kapital', {}).get('wysokoscKapitaluZakladowego', [])
         
-        if not historia_wpisow:
-            print("   -> ախ DIAGNOSTYKA: Nie znaleziono historii wpisów ('wpis'). Analiza przerwana.")
+        # Jeśli nie ma historii kapitału lub jest tylko jeden wpis, nie mogło być zmian.
+        if not historia_kapitalu or len(historia_kapitalu) < 2:
             return None
 
-        ostatni_wpis = max(historia_wpisow, key=lambda wpis: int(wpis.get('numerWpisu', 0)))
-        numer_ostatniego_wpisu = int(ostatni_wpis.get('numerWpisu', 0))
-        print(f"   -> ախ DIAGNOSTYKA: Znaleziono ostatni wpis. Numer: {numer_ostatniego_wpisu}, Data: {ostatni_wpis.get('dataWpisu')}")
+        # NOWA LOGIKA KROK 1: Znajdź najnowszą zmianę bezpośrednio w historii kapitału.
+        # Szukamy wpisu o kapitale z najwyższym numerem 'nrWpisuWprow'.
+        wpisy_wprowadzone = [k for k in historia_kapitalu if 'nrWpisuWprow' in k]
+        if not wpisy_wprowadzone:
+            return None
+            
+        ostatnia_zmiana_kapitalu = max(wpisy_wprowadzone, key=lambda k: int(k.get('nrWpisuWprow', 0)))
+        numer_wpisu_zmieniajacego = int(ostatnia_zmiana_kapitalu.get('nrWpisuWprow', 0))
 
-        if numer_ostatniego_wpisu == 0:
+        if numer_wpisu_zmieniajacego == 0:
             return None
 
-        data_zmiany = datetime.strptime(ostatni_wpis['dataWpisu'], "%d.%m.%Y").date()
+        # NOWA LOGIKA KROK 2: Na podstawie znalezionego numeru, odszukaj wpis sądowy i jego datę.
+        wpis_sadowy = next((w for w in historia_wpisow if int(w.get('numerWpisu', -1)) == numer_wpisu_zmieniajacego), None)
+        if not wpis_sadowy:
+            return None
+
+        # NOWA LOGIKA KROK 3: Sprawdź, czy data tej zmiany mieści się w naszym okresie.
+        data_zmiany = datetime.strptime(wpis_sadowy['dataWpisu'], "%d.%m.%Y").date()
 
         if not (data_poczatkowa <= data_zmiany <= data_koncowa):
-            print(f"   -> ախ DIAGNOSTYKA: Data ostatniego wpisu ({data_zmiany}) jest poza monitorowanym okresem. Ignoruję.")
             return None
         
-        print("   -> ախ DIAGNOSTYKA: Data ostatniego wpisu jest w poprawnym zakresie. Szukam powiązania z kapitałem...")
-        wpis_zmieniajacy_kapital = next((
-            kapital for kapital in historia_kapitalu 
-            if int(kapital.get('nrWpisuWprow', -1)) == numer_ostatniego_wpisu
-        ), None)
+        # Jeśli doszliśmy tutaj, to mamy pewność, że najnowsza zmiana kapitału
+        # miała miejsce w badanym okresie. Zbieramy dane do raportu.
 
-        if wpis_zmieniajacy_kapital:
-            print("   -> ախ DIAGNOSTYKA: ZNALEZIONO POWIĄZANIE! Ostatni wpis dotyczył kapitału.")
-            historia_nazw = dane_dzial1.get('danePodmiotu', {}).get('nazwa', [])
-            aktualna_nazwa_info = next((nazwa for nazwa in historia_nazw if 'nrWpisuWykr' not in nazwa), None)
-            nazwa_firmy = aktualna_nazwa_info['nazwa'] if aktualna_nazwa_info else "Nie udało się ustalić nazwy"
-            poprzedni_kapital_info = next((k for k in historia_kapitalu if int(k.get('nrWpisuWykr', -1)) == numer_ostatniego_wpisu), None)
-            poprzedni_kapital = poprzedni_kapital_info['wartosc'] if poprzedni_kapital_info else "Brak danych"
-            return {
-                "nazwa": nazwa_firmy,
-                "krs": odpis.get('odpis', {}).get('naglowekP', {}).get('numerKRS'),
-                "data_zmiany": ostatni_wpis['dataWpisu'],
-                "nowy_kapital": wpis_zmieniajacy_kapital.get('wartosc', 'Brak danych'),
-                "poprzedni_kapital": poprzedni_kapital
-            }
-        else:
-            print("   -> ախ DIAGNOSTYKA: Ostatni wpis NIE dotyczył kapitału zakładowego. Analiza zakończona bez wyniku.")
-            # DODATKOWE LOGOWANIE: Wydrukujmy zawartość historii kapitału, żeby zobaczyć, co tam jest
-            print("   -> ախ DIAGNOSTYKA: Zawartość 'historia_kapitalu' w danych na żywo:")
-            print(f"   {historia_kapitalu}")
+        nowy_kapital = ostatnia_zmiana_kapitalu.get('wartosc', 'Brak danych')
+
+        # NOWA LOGIKA KROK 4: Znajdź poprzednią wartość kapitału (inspirowane JS).
+        # Filtrujemy listę kapitałów, zostawiając tylko te starsze niż ostatnia zmiana.
+        starsze_kapitaly = [
+            k for k in wpisy_wprowadzone 
+            if int(k.get('nrWpisuWprow', 0)) < numer_wpisu_zmieniajacego
+        ]
+        poprzedni_kapital = "Brak danych"
+        if starsze_kapitaly:
+            # Sortujemy je od najnowszego do najstarszego i bierzemy pierwszy z listy.
+            ostatni_poprzedni_kapital = sorted(starsze_kapitaly, key=lambda k: int(k.get('nrWpisuWprow', 0)), reverse=True)[0]
+            poprzedni_kapital = ostatni_poprzedni_kapital.get('wartosc', 'Brak danych')
+
+        # Pozostałe dane
+        historia_nazw = dane_dzial1.get('danePodmiotu', {}).get('nazwa', [])
+        aktualna_nazwa_info = next((nazwa for nazwa in historia_nazw if 'nrWpisuWykr' not in nazwa), None)
+        nazwa_firmy = aktualna_nazwa_info['nazwa'] if aktualna_nazwa_info else "Nie udało się ustalić nazwy"
+
+        return {
+            "nazwa": nazwa_firmy,
+            "krs": odpis.get('odpis', {}).get('naglowekP', {}).get('numerKRS'),
+            "data_zmiany": wpis_sadowy['dataWpisu'],
+            "nowy_kapital": nowy_kapital,
+            "poprzedni_kapital": poprzedni_kapital
+        }
 
     except (KeyError, IndexError, TypeError, ValueError) as e:
         krs_dla_bledu = odpis.get('odpis', {}).get('naglowekP', {}).get('numerKRS', ' nieznany')
         print(f"   -> ⚠️ Wystąpił krytyczny błąd podczas analizy KRS {krs_dla_bledu}: {e}")
         return None
     return None
+
 
 def wyslij_email(tresc_raportu, odbiorcy):
     """Ta funkcja jest odpowiedzialna za wysłanie gotowego raportu e-mailem."""
@@ -181,28 +195,4 @@ def main():
         time.sleep(OPÓŹNIENIE_API)
 
     if spolki_ze_zmiana_kapitalu:
-        print(f"\n📊 Znaleziono {len(spolki_ze_zmiana_kapitalu)} spółek ze zmianą kapitału.")
-        linie_raportu = [
-            f"Raport zmian w kapitale zakładowym monitorowanych spółek w okresie od {data_poczatkowa.strftime('%d.%m.%Y')} do {data_koncowa.strftime('%d.%m.%Y')}.\n",
-            f"Znaleziono {len(spolki_ze_zmiana_kapitalu)} podmiotów:\n",
-            "--------------------------------------------------"
-        ]
-        for spolka in spolki_ze_zmiana_kapitalu:
-            linia = (
-                f"Nazwa: {spolka['nazwa']}\n"
-                f"KRS: {spolka['krs']}\n"
-                f"Data zmiany: {spolka['data_zmiany']}\n"
-                f"Poprzedni kapitał: {spolka['poprzedni_kapital']} PLN\n"
-                f"Nowy kapitał: {spolka['nowy_kapital']} PLN\n"
-                "--------------------------------------------------"
-            )
-            linie_raportu.append(linia)
-        tresc_raportu = "\n".join(linie_raportu)
-        wyslij_email(tresc_raportu, lista_odbiorcow)
-    else:
-        print("\n✅ Na Twojej liście nie znaleziono żadnych spółek ze zmianą kapitału zakładowego w badanym okresie.")
-
-    print("🏁 Skrypt zakończył pracę.")
-
-if __name__ == "__main__":
-    main()
+        print(f"\n📊
