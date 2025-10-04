@@ -248,7 +248,7 @@ def zbuduj_tresc_maila_html(zmiany: list[dict]) -> str:
     if not zmiany:
         return """
         <html><body style="font-family: Arial, Helvetica, sans-serif; color:#111;">
-          <p>Cześć, to ja, skrypt monitorujący zmiany w kapitale zakładowym w spółkach publicznych.</p>
+          <p>Cześć, to ja, Wasz skrypt (made by SH&AI) monitorujący zmiany w kapitale zakładowym w spółkach publicznych.</p>
           <p>W badanym okresie nie odnotowano zmian kapitału zakładowego.</p>
         </body></html>
         """
@@ -271,7 +271,7 @@ def zbuduj_tresc_maila_html(zmiany: list[dict]) -> str:
       <body style="font-family: Arial, Helvetica, sans-serif; color:#111; line-height:1.45;">
         <h2 style="margin:0 0 12px 0;">Ostatnie rejestracje akcji spółek publicznych</h2>
 
-        <p>Cześć, to ja, skrypt monitorujący zmiany w kapitale zakładowym w spółkach publicznych.</p>
+        <p>Cześć, to ja, Wasz skrypt (made by SH&AI) monitorujący zmiany w kapitale zakładowym w spółkach publicznych.</p>
         <p>Wykryto zmiany kapitału zakładowego w badanym okresie dla:</p>
 
         <table role="presentation" cellpadding="0" cellspacing="0" border="0"
