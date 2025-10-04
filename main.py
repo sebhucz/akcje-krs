@@ -389,6 +389,7 @@ def main():
     data_do = dzis
     print(f"🗓️ Okno analizowane: {data_od.strftime('%d.%m.%Y')} – {data_do.strftime('%d.%m.%Y')}")
 
+    # >>> WAŻNE: inicjalizacja PRZED pętlą <<<
     wszystkie_zmiany: list[dict] = []
 
     for i, krs in enumerate(krs_lista, start=1):
@@ -404,20 +405,18 @@ def main():
         else:
             print("   -> ℹ️ Brak zmian kapitału w oknie czasu.")
 
-        # Delikatny odstęp między zapytaniami, żeby nie „maltretować” API
+        # mały odstęp, żeby nie przeciążać API
         time.sleep(0.4)
 
-if wszystkie_zmiany:
-    tresc_html = zbuduj_tresc_maila_html(wszystkie_zmiany)
-    tresc_text = zbuduj_tresc_maila_text(wszystkie_zmiany)
+    # >>> Ten blok MUSI być w funkcji main(), po pętli, gdy 'wszystkie_zmiany' już istnieje <<<
+    if wszystkie_zmiany:
+        tresc_html = zbuduj_tresc_maila_html(wszystkie_zmiany)
+        tresc_text = zbuduj_tresc_maila_text(wszystkie_zmiany)
 
-    # Podgląd w logu (plain text – żeby log był czytelny)
-    print("\n📋 Podsumowanie zmian (tekst):\n" + tresc_text + "\n")
-
-    wyslij_email_do_odbiorcow(tresc_html, tresc_text, odbiorcy)
-else:
-    print("\n✅ Na Twojej liście nie znaleziono żadnych spółek ze zmianą kapitału zakładowego w badanym okresie.")
-
+        print("\n📋 Podsumowanie zmian (tekst):\n" + tresc_text + "\n")
+        wyslij_email_do_odbiorcow(tresc_html, tresc_text, odbiorcy)
+    else:
+        print("\n✅ Na Twojej liście nie znaleziono żadnych spółek ze zmianą kapitału zakładowego w badanym okresie.")
 
     print("🏁 Skrypt zakończył pracę.")
 
