@@ -161,11 +161,11 @@ def wyslij_email(tresc_raportu, odbiorcy):
     except Exception as e:
         print(f"❌ Wystąpił błąd podczas wysyłania e-maila: {e}")
 
-# ---------------------------------------------------------------------------
+# # ---------------------------------------------------------------------------
 # KROK 4: Główna funkcja wykonująca skrypt (uruchomienie)
 # ---------------------------------------------------------------------------
 def main():
-    """Główna funkcja, która steruje całym procesem."""
+    """Główna funkcja, która steruje całym procesem, wywołując inne funkcje w odpowiedniej kolejności."""
     print("🚀 Start skryptu monitorującego zmiany w KRS.")
     
     lista_odbiorcow = wczytaj_odbiorcow_z_pliku()
@@ -195,4 +195,27 @@ def main():
         time.sleep(OPÓŹNIENIE_API)
 
     if spolki_ze_zmiana_kapitalu:
-        print(f"\n📊
+        # PONIŻSZA LINIA ZOSTAŁA POPRAWIONA - UPEWNIJ SIĘ, ŻE JEST W CAŁOŚCI W JEDNEJ LINII
+        print(f"\n📊 Znaleziono {len(spolki_ze_zmiana_kapitalu)} spółek ze zmianą kapitału.")
+        
+        linie_raportu = [
+            f"Raport zmian w kapitale zakładowym monitorowanych spółek w okresie od {data_poczatkowa.strftime('%d.%m.%Y')} do {data_koncowa.strftime('%d.%m.%Y')}.\n",
+            f"Znaleziono {len(spolki_ze_zmiana_kapitalu)} podmiotów:\n",
+            "--------------------------------------------------"
+        ]
+        for spolka in spolki_ze_zmiana_kapitalu:
+            linia = (
+                f"Nazwa: {spolka['nazwa']}\n"
+                f"KRS: {spolka['krs']}\n"
+                f"Data zmiany: {spolka['data_zmiany']}\n"
+                f"Poprzedni kapitał: {spolka['poprzedni_kapital']} PLN\n"
+                f"Nowy kapitał: {spolka['nowy_kapital']} PLN\n"
+                "--------------------------------------------------"
+            )
+            linie_raportu.append(linia)
+        tresc_raportu = "\n".join(linie_raportu)
+        wyslij_email(tresc_raportu, lista_odbiorcow)
+    else:
+        print("\n✅ Na Twojej liście nie znaleziono żadnych spółek ze zmianą kapitału zakładowego w badanym okresie.")
+
+    print("🏁 Skrypt zakończył pracę.")
