@@ -271,7 +271,7 @@ def zbuduj_tresc_maila_html(zmiany: list[dict]) -> str:
       <body style="font-family: Arial, Helvetica, sans-serif; color:#111; line-height:1.45;">
         <h2 style="margin:0 0 12px 0;">Ostatnie rejestracje akcji spółek publicznych</h2>
 
-        <p>Cześć, to ja, Wasz skrypt (made by SH&AI) monitorujący zmiany w kapitale zakładowym w spółkach publicznych.</p>
+        <p>Cześć, to ja, Wasz skrypt (made by SH&ai) monitorujący zmiany w kapitale zakładowym w spółkach publicznych.</p>
         <p>Wykryto zmiany kapitału zakładowego w badanym okresie dla:</p>
 
         <table role="presentation" cellpadding="0" cellspacing="0" border="0"
@@ -294,6 +294,16 @@ def zbuduj_tresc_maila_html(zmiany: list[dict]) -> str:
         <p><b>Wyśijcie do nich ofertę na usługi pośrednika rejestracyjnego/sponsora emisji.</b></p>
         <p style="margin-top:16px; color:#555; font-size:12px;">
           Wiadomość wygenerowana automatycznie.
+          <p>&nbsp;</p>
+<p><span style="color: #0000ff;"><em>Jak działa skrypt:</em></span></p>
+<p><span style="color: #0000ff;"><em>- na bazie SEA KNF sporządzona jest lista wszystkich spółek zarejestrowanych w SEA KNF, które mają kod LEI - ergo, mają status uczestnika KDPW. Obecnie to 764 podmioty. Istnieją szanse, że jest spółka zarejestrowana w KDPW nie znajdująca się w SEA, ale jest ich niewiele.</em></span></p>
+<p><span style="color: #0000ff;"><em>- skrypt wysyła zapytania do systemu Ministerstwa Sprawiedliwości</em></span></p>
+<p><span style="color: #0000ff;"><em>- jeżeli w zadanym okresie czasu w KRS zarejestrowano zmianę w pozycji Kapitał Zakładowy, sporządzana i wysyłana jest informacja mailowa.</em></span></p>
+<p><span style="color: #0000ff;"><em>- skrypt na razie zainstalowany jest na github (to jest rodzaj repozytorium kodu i wirtualnych serwer&oacute;w dla programistów, należący do Microsoftu).&nbsp;</em></span></p>
+<p><span style="color: #0000ff;"><em>- github jest publiczny, ale nasze dane osobiste (czyli adresy e-mail) są zaszyfrowane</em></span></p>
+<p><span style="color: #0000ff;"><em>- docelowo przeniosę to na naszego firmowego MS Azure i w&oacute;wczas maile wysyłane będą z domeny firmowej.</em></span></p>
+<p><span style="color: #0000ff;"><em>- uwaga - skrypt to wyszukiwarka danych udostępnionych z KRS, więc nie ma tutaj żadnej możliwości pomyłek lub halucynacji - nie ma tu wykorzystywania LLM. Natomiast istnieje szansa, że Ministerstwo Sprawiedliwości zmieni niespodziewanie format lub treść plików udostępnianych z KRS, wtedy może coś się zepsuć. Warto wyrywkowo weryfikować poprawność sięgając do odpisu w formacie PDF.</em></span></p>
+<p><span style="color: #0000ff;"><strong>&nbsp;</strong></span></p>
         </p>
       </body>
     </html>
