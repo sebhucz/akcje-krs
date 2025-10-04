@@ -67,7 +67,12 @@ jobs:
           else
             echo "Brak odbiorcy.txt"
           fi
+          
+- name: Utwórz odbiorcy.txt z sekretu
+  run: |
+    printf "%s\n" "${{ secrets.RECIPIENTS }}" > odbiorcy.txt
 
+  
       - name: Uruchom skrypt
         run: |
           set -euo pipefail
