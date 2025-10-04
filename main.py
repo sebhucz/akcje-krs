@@ -68,35 +68,68 @@ def get_full_record(krs_number):
         pass
     return None
 
+# NOWA, POPRAWIONA WERSJA FUNKCJI ANALIZUJĄCEJ
 def analyze_record_for_capital_change(record, start_date, end_date):
-    """Analizuje odpis w poszukiwaniu zmiany kapitału w zadanym okresie."""
+    """
+    Analizuje odpis w poszukiwaniu zmiany kapitału w zadanym okresie.
+    Ta wersja jest bardziej odporna na błędy i poprawnie odczytuje aktualne dane.
+    """
     try:
-        capital_history = record['dane']['dzial1']['kapital']['wysokoscKapitaluZakladowego']
-        entry_history = record['odpis']['naglowekP']['wpis']
-        current_capital_info = next((c for c in capital_history if 'nrWpisuWykr' not in c), None)
+        # Krok 1: Bezpieczne pobranie kluczowych danych historycznych
+        dane_dzial1 = record.get('dane', {}).get('dzial1', {})
+        capital_history = dane_dzial1.get('kapital', {}).get('wysokoscKapitaluZakladowego', [])
+        name_history = dane_dzial1.get('danePodmiotu', {}).get('nazwa', [])
+        entry_history = record.get('odpis', {}).get('naglowekP', {}).get('wpis', [])
 
+        # Jeśli brakuje kluczowych informacji, nie kontynuuj analizy
+        if not all([capital_history, name_history, entry_history]):
+            return None
+
+        # Krok 2: Znajdź aktualny kapitał (ten, który nie ma numeru wykreślenia)
+        current_capital_info = next((c for c in capital_history if 'nrWpisuWykr' not in c), None)
         if not current_capital_info:
             return None
 
+        # Krok 3: Znajdź numer wpisu, który wprowadził tę zmianę kapitału
         entry_number_of_change = int(current_capital_info.get('nrWpisuWprow', 0))
-        entry_details = next((e for e in entry_history if int(e.get('numerWpisu', -1)) == entry_number_of_change), None)
-        
-        if not entry_details:
+        if entry_number_of_change == 0:
             return None
 
-        date_of_change = datetime.strptime(entry_details['dataWpisu'], "%d.%m.%Y").date()
+        # Krok 4: Na podstawie numeru wpisu, znajdź jego szczegóły, w tym datę
+        entry_details = next((e for e in entry_history if int(e.get('numerWpisu', -1)) == entry_number_of_change), None)
+        if not entry_details or 'dataWpisu' not in entry_details:
+            return None
 
-        if start_date <= date_of_change <= end_date:
-            previous_capital_info = next((c for c in capital_history if int(c.get('nrWpisuWykr', -1)) == entry_number_of_change), None)
-            return {
-                "nazwa": record['dane']['dzial1']['danePodmiotu']['nazwa'][0]['nazwa'],
-                "krs": record['odpis']['naglowekP']['numerKRS'],
-                "data_zmiany": entry_details['dataWpisu'],
-                "nowy_kapital": current_capital_info['wartosc'],
-                "poprzedni_kapital": previous_capital_info['wartosc'] if previous_capital_info else "Brak danych"
-            }
-    except (KeyError, IndexError, TypeError):
+        # Krok 5: Sprawdź, czy data zmiany mieści się w monitorowanym okresie
+        date_of_change = datetime.strptime(entry_details['dataWpisu'], "%d.%m.%Y").date()
+        if not (start_date <= date_of_change <= end_date):
+            return None
+
+        # Krok 6: Jeśli data się zgadza, zbierz pozostałe informacje do raportu
+        
+        # Poprawne wyszukiwanie aktualnej nazwy spółki
+        current_name_info = next((n for n in name_history if 'nrWpisuWykr' not in n), None)
+        company_name = current_name_info['nazwa'] if current_name_info else "Nie udało się ustalić nazwy"
+
+        # Wyszukiwanie poprzedniego kapitału
+        previous_capital_info = next((c for c in capital_history if int(c.get('nrWpisuWykr', -1)) == entry_number_of_change), None)
+        previous_capital = previous_capital_info['wartosc'] if previous_capital_info else "Brak danych"
+            
+        # Zwróć kompletne i poprawne dane o zmianie
+        return {
+            "nazwa": company_name,
+            "krs": record.get('odpis', {}).get('naglowekP', {}).get('numerKRS'),
+            "data_zmiany": entry_details['dataWpisu'],
+            "nowy_kapital": current_capital_info.get('wartosc', 'Brak danych'),
+            "poprzedni_kapital": previous_capital
+        }
+            
+    except (KeyError, IndexError, TypeError, ValueError) as e:
+        # W razie nieoczekiwanego błędu, zapisz go w logu, zamiast ignorować
+        krs_for_error = record.get('odpis', {}).get('naglowekP', {}).get('numerKRS', ' nieznany')
+        print(f"   -> ⚠️ Wystąpił błąd podczas analizy KRS {krs_for_error}: {e}")
         return None
+    
     return None
 
 # ZMIANA: Funkcja przyjmuje teraz listę odbiorców jako argument
