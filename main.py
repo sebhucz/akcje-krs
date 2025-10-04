@@ -289,7 +289,9 @@ def zbuduj_tresc_maila_html(zmiany: list[dict]) -> str:
             {''.join(rows)}
           </tbody>
         </table>
+ <h2 style="margin:0 0 12px 0;">Ostatnie rejestracje akcji spółek publicznych</h2>
 
+        <p><b>Wyśijcie do nich ofertę na usługi pośrednika rejestracyjnego/sponsora emisji.</b></p>
         <p style="margin-top:16px; color:#555; font-size:12px;">
           Wiadomość wygenerowana automatycznie – proszę nie odpowiadać.
         </p>
