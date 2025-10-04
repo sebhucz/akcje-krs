@@ -1,215 +1,345 @@
 # -*- coding: utf-8 -*-
+"""
+Skrypt: Monitor zmian kapitału zakładowego w KRS (okno: ostatnie 30 dni)
+Autor: (Ty 😊)
 
-# ---------------------------------------------------------------------------
-# KROK 1: Importowanie potrzebnych narzędzi (tzw. bibliotek)
-# ---------------------------------------------------------------------------
+Co robi?
+1) Wczytuje listę numerów KRS z pliku 'krs_do_monitorowania.txt'.
+2) Dla każdego KRS pobiera publiczny odpis JSON z API KRS.
+3) Analizuje pełny odpis: wyszukuje WSZYSTKIE zmiany kapitału zakładowego,
+   które zostały wprowadzone w ostatnich 30 dniach (liczone wg daty wpisu).
+4) Jeśli znajdzie jakiekolwiek zmiany – buduje zbiorczy raport i wysyła go e-mailem
+   do adresów z pliku 'odbiorcy.txt'.
+5) Czytelnie loguje przebieg działania (co sprawdza, co znalazł itp.).
+
+Wymagane biblioteki: requests
+
+Uwaga o datach:
+- API KRS zwraca daty wpisów w formacie DD.MM.RRRR (np. "16.09.2025").
+- Okno "ostatnie 30 dni" liczymy względem daty DZISIAJ w strefie Europe/Warsaw.
+"""
+
 import os
-import requests
-import time
-from datetime import datetime, timedelta, timezone
-import smtplib
+import sys
 import ssl
+import time
+import smtplib
+import requests
+from datetime import datetime, timedelta, date
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# ---------------------------------------------------------------------------
-# KROK 2: Główna konfiguracja skryptu
-# ---------------------------------------------------------------------------
-EMAIL_NADAWCY = os.environ.get("EMAIL_SENDER")
-HASLO_NADAWCY = os.environ.get("EMAIL_PASSWORD")
-SERWER_SMTP = os.environ.get("SMTP_SERVER")
-PORT_SMTP = os.environ.get("SMTP_PORT")
+# Od Python 3.9 mamy wbudowaną strefę czasową:
+try:
+    from zoneinfo import ZoneInfo
+    TZ = ZoneInfo("Europe/Warsaw")
+except Exception:
+    TZ = None  # jeśli system nie ma zoneinfo, zadziałamy "na sucho" z datą lokalną
 
-ADRES_BAZOWY_API = "https://api-krs.ms.gov.pl/api/krs"
-OPÓŹNIENIE_API = 1
-DNI_DO_SPRAWDZENIA = 30
+# ------------------------------
+# KONFIGURACJA UŻYTKOWA (zmień w razie potrzeby)
+# ------------------------------
+DNI_OKNA = 30
+PLIK_KRS = "krs_do_monitorowania.txt"
+PLIK_ODB = "odbiorcy.txt"
+API_ODPIS_URL = "https://api-krs.ms.gov.pl/api/krs/OdpisPelny/{krs}"  # {krs} podstawiamy numerem
+REQUEST_TIMEOUT = 15  # sekundy
 
-# ---------------------------------------------------------------------------
-# KROK 3: Definicje funkcji (główna logika skryptu)
-# ---------------------------------------------------------------------------
+# SMTP: podaj przez zmienne środowiskowe (to bezpieczniejsze niż wpisywanie do pliku)
+# Przykład (w PowerShell / Bash):
+#   setx SMTP_HOST "smtp.twojserwer.pl"
+#   setx SMTP_PORT "465"
+#   setx SMTP_USER "noreply@twojadomena.pl"
+#   setx SMTP_PASS "tajnehaslo"
+#   setx EMAIL_FROM "noreply@twojadomena.pl"
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465") or 465)
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER or "")
+EMAIL_SUBJECT = "Zmiany kapitału zakładowego – ostatnie 30 dni"
 
-def wczytaj_liste_krs_z_pliku(nazwa_pliku="krs_do_monitorowania.txt"):
-    """Ta funkcja otwiera plik z listą numerów KRS i wczytuje je do pamięci."""
+# ------------------------------
+# NARZĘDZIA POMOCNICZE
+# ------------------------------
+def dzis_w_warszawie() -> date:
+    """Zwraca dzisiejszą datę w strefie Europe/Warsaw (jeśli możliwe)."""
+    if TZ:
+        return datetime.now(TZ).date()
+    return datetime.now().date()  # fallback
+
+def parse_pl_date(s: str) -> date:
+    """Parsuje 'DD.MM.RRRR' na obiekt datetime.date."""
+    return datetime.strptime(s, "%d.%m.%Y").date()
+
+def wczytaj_linie_z_pliku(nazwa_pliku: str) -> list[str]:
+    """
+    Wczytuje linie z pliku, usuwa białe znaki, pomija puste.
+    Jeśli plik nie istnieje – zwraca pustą listę i loguje błąd.
+    """
     try:
-        with open(nazwa_pliku, 'r', encoding='utf-8') as plik:
-            lista_krs = [linia.strip() for linia in plik if linia.strip()]
-        print(f"📄 Wczytano {len(lista_krs)} numerów KRS z pliku '{nazwa_pliku}'.")
-        return lista_krs
+        with open(nazwa_pliku, "r", encoding="utf-8") as f:
+            return [linia.strip() for linia in f if linia.strip()]
     except FileNotFoundError:
-        print(f"❌ BŁĄD: Nie znaleziono pliku '{nazwa_pliku}'! Upewnij się, że plik istnieje w repozytorium.")
+        print(f"❌ BŁĄD: Nie znaleziono pliku '{nazwa_pliku}'. Upewnij się, że plik jest obok skryptu.")
         return []
 
-def wczytaj_odbiorcow_z_pliku(nazwa_pliku="odbiorcy.txt"):
-    """Ta funkcja otwiera plik z listą adresów e-mail i wczytuje je do pamięci."""
-    try:
-        with open(nazwa_pliku, 'r', encoding='utf-8') as plik:
-            odbiorcy = [linia.strip() for linia in plik if linia.strip() and '@' in linia]
-        print(f"📧 Wczytano {len(odbiorcy)} odbiorców z pliku '{nazwa_pliku}'.\n")
-        return odbiorcy
-    except FileNotFoundError:
-        print(f"❌ BŁĄD: Nie znaleziono pliku odbiorców '{nazwa_pliku}'! Upewnij się, że plik istnieje.")
-        return []
+def wczytaj_krs_z_pliku(nazwa_pliku: str = PLIK_KRS) -> list[str]:
+    """Wczytuje numery KRS (jeden na linię)."""
+    krsy = wczytaj_linie_z_pliku(nazwa_pliku)
+    print(f"📄 Wczytano {len(krsy)} numerów KRS z pliku '{nazwa_pliku}'.")
+    return krsy
 
-def pobierz_pelny_odpis(numer_krs):
-    """Ta funkcja wysyła do API prośbę o pełny odpis dla danego numeru KRS."""
-    url = f"{ADRES_BAZOWY_API}/OdpisPelny/{numer_krs}?rejestr=P"
+def wczytaj_odbiorcow_z_pliku(nazwa_pliku: str = PLIK_ODB) -> list[str]:
+    """Wczytuje adresy e-mail odbiorców (jeden na linię, musi zawierać '@')."""
+    odb = [linia for linia in wczytaj_linie_z_pliku(nazwa_pliku) if "@" in linia]
+    print(f"📧 Wczytano {len(odb)} odbiorców z pliku '{nazwa_pliku}'.")
+    return odb
+
+def pobierz_pelny_odpis_json(krs: str) -> dict | None:
+    """
+    Pobiera pełny odpis JSON dla podanego KRS.
+    Zwraca dict (parsowany JSON) lub None w razie błędu.
+    """
+    url = API_ODPIS_URL.format(krs=krs)
     try:
-        odpowiedz = requests.get(url)
-        if odpowiedz.status_code == 200:
-            return odpowiedz.json()
-    except requests.exceptions.RequestException:
-        pass
+        resp = requests.get(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "krs-monitor/1.0 (mailto:{})".format(EMAIL_FROM or "unknown")
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            print(f"   -> ⚠️ API zwróciło status {resp.status_code} dla KRS {krs}.")
+            return None
+
+        data = resp.json()
+        # Niektóre odpowiedzi mają dane w polu 'odpis'; interesuje nas właśnie to drzewo.
+        if not isinstance(data, dict) or "odpis" not in data:
+            print("   -> ⚠️ Nie znaleziono klucza 'odpis' w odpowiedzi API – pomijam.")
+            return None
+        return data
+
+    except requests.exceptions.Timeout:
+        print(f"   -> ⚠️ Przekroczono timeout {REQUEST_TIMEOUT}s dla KRS {krs}.")
+    except Exception as e:
+        print(f"   -> ⚠️ Błąd pobierania dla KRS {krs}: {e}")
     return None
 
-# ✅ NOWA, KOMPLETNIE POPRAWIONA FUNKCJA ANALIZUJĄCA
-def przeanalizuj_odpis_pod_katem_zmiany_kapitalu(odpis, data_poczatkowa, data_koncowa):
+# ------------------------------
+# ANALIZA: wyszukiwanie zmian kapitału w oknie 30 dni
+# ------------------------------
+def znajdz_zmiany_kapitalu_w_oknie(odpis: dict, data_od: date, data_do: date) -> list[dict]:
     """
-    Analizuje odpis w poszukiwaniu zmiany kapitału w zadanym okresie,
-    uwzględniając poprawną strukturę JSON i elastyczną logikę dat.
+    Zwraca listę WSZYSTKICH zmian kapitału w oknie [data_od, data_do] (obie granice włącznie).
+    Każdy element listy ma pola:
+      - nazwa
+      - krs
+      - data_zmiany (DD.MM.RRRR – data wpisu)
+      - nowy_kapital
+      - poprzedni_kapital (lub None, jeśli nie da się ustalić)
+
+    Jak działa (krótko i po ludzku):
+    1) Budujemy słownik: numerWpisu -> wpis (żeby po numerze szybko znaleźć datę wpisu).
+    2) Przechodzimy po wszystkich pozycjach „kapitału zakładowego”.
+       Każda pozycja ma informację, w którym wpisie została WPROWADZONA (nrWpisuWprow).
+    3) Sprawdzamy datę tego wpisu – jeśli mieści się w naszym oknie, traktujemy to jako „zmianę”.
+    4) „Poprzednią” wartość bierzemy z pozycji, której nrWpisuWykr == nrWpisuWprow (tak działa wersjonowanie w KRS).
     """
+    wyniki: list[dict] = []
     try:
-        # Prawidłowa ścieżka do danych zagnieżdżonych w kluczu 'odpis'
-        dane_odpisu = odpis.get('odpis', {})
-        if not dane_odpisu:
-            return None
+        naglowek = odpis.get("odpis", {}).get("naglowekP", {})
+        wszystkie_wpisy = naglowek.get("wpis", []) or []
+        mapa_wpisow = {}
+        for w in wszystkie_wpisy:
+            try:
+                nr = int(w.get("numerWpisu"))
+                mapa_wpisow[nr] = w
+            except Exception:
+                continue
 
-        historia_wpisow = dane_odpisu.get('naglowekP', {}).get('wpis', [])
-        # <--- POPRAWKA TUTAJ: ścieżka do 'dane' prowadzi przez 'odpis'
-        dane_dzial1 = dane_odpisu.get('dane', {}).get('dzial1', {})
-        
-        historia_kapitalu = dane_dzial1.get('kapital', {}).get('wysokoscKapitaluZakladowego', [])
+        # Historia kapitału – UWAŻAJ: poprawna ścieżka jest „głębiej”:
+        historia_kapitalu = (
+            odpis.get("odpis", {})
+                 .get("dane", {})
+                 .get("dzial1", {})
+                 .get("kapital", {})
+                 .get("wysokoscKapitaluZakladowego", [])
+        )
+        if not historia_kapitalu:
+            print("   -> brak sekcji 'kapital/wysokoscKapitaluZakladowego' – pomijam.")
+            return []
 
-        if not historia_wpisow or not historia_kapitalu:
-            return None
+        # Bieżąca nazwa spółki = pozycja NAJNOWSZA bez 'nrWpisuWykr'
+        historia_nazw = (
+            odpis.get("odpis", {})
+                 .get("dane", {})
+                 .get("dzial1", {})
+                 .get("danePodmiotu", {})
+                 .get("nazwa", [])
+        )
+        aktualna_nazwa = next((n for n in historia_nazw if "nrWpisuWykr" not in n), None)
+        nazwa_firmy = (aktualna_nazwa or {}).get("nazwa", "Nie udało się ustalić nazwy")
+        krs = naglowek.get("numerKRS", "????")
 
-        mapa_dat_wpisow = {int(wpis['numerWpisu']): wpis['dataWpisu'] for wpis in historia_wpisow}
-        
-        znalezione_zmiany = []
+        # Iterujemy po pozycjach kapitału i wyławiamy te, które „weszły” w oknie czasu
+        for pozycja in historia_kapitalu:
+            nr_wprow = pozycja.get("nrWpisuWprow")
+            if not nr_wprow:
+                continue  # pozycje bez numeru wprowadzającego nas nie interesują
 
-        for wpis_kapitalu in historia_kapitalu:
-            if 'nrWpisuWprow' in wpis_kapitalu:
-                numer_wpisu = int(wpis_kapitalu['nrWpisuWprow'])
-                data_zmiany_str = mapa_dat_wpisow.get(numer_wpisu)
-                
-                if not data_zmiany_str:
-                    continue
+            try:
+                nr = int(nr_wprow)
+            except ValueError:
+                continue
 
-                data_zmiany = datetime.strptime(data_zmiany_str, "%d.%m.%Y").date()
+            wpis = mapa_wpisow.get(nr)
+            if not wpis or "dataWpisu" not in wpis:
+                continue
 
-                if data_poczatkowa <= data_zmiany <= data_koncowa:
-                    nowy_kapital = wpis_kapitalu.get('wartosc')
-                    
-                    numer_wpisu_wykreslajacego = numer_wpisu
-                    wpis_poprzedniego_kapitalu = next((k for k in historia_kapitalu if k.get('nrWpisuWykr') and int(k.get('nrWpisuWykr')) == numer_wpisu_wykreslajacego), None)
-                    poprzedni_kapital = wpis_poprzedniego_kapitalu.get('wartosc') if wpis_poprzedniego_kapitalu else "Brak danych"
+            try:
+                data_wpisu = parse_pl_date(wpis["dataWpisu"])
+            except Exception:
+                continue
 
-                    # <--- POPRAWKA TUTAJ: ścieżka do 'dane' prowadzi przez 'odpis'
-                    historia_nazw = dane_dzial1.get('danePodmiotu', {}).get('nazwa', [])
-                    aktualna_nazwa_info = next((nazwa for nazwa in historia_nazw if 'nrWpisuWykr' not in nazwa), None)
-                    nazwa_firmy = aktualna_nazwa_info.get('nazwa') if aktualna_nazwa_info else "Nie udało się ustalić nazwy"
+            if not (data_od <= data_wpisu <= data_do):
+                continue  # poza badanym oknem
 
-                    # Dodajemy do listy, aby później ewentualnie wybrać najnowszą zmianę
-                    znalezione_zmiany.append({
-                        "nazwa": nazwa_firmy,
-                        "krs": dane_odpisu.get('naglowekP', {}).get('numerKRS'),
-                        "data_zmiany": data_zmiany_str,
-                        "data_do_sortowania": data_zmiany,
-                        "nowy_kapital": nowy_kapital,
-                        "poprzedni_kapital": poprzedni_kapital
-                    })
-        
-        # Jeśli znaleziono jakiekolwiek zmiany w okresie, zwróć najnowszą z nich
-        if znalezione_zmiany:
-            najnowsza_zmiana = max(znalezione_zmiany, key=lambda x: x['data_do_sortowania'])
-            del najnowsza_zmiana['data_do_sortowania'] # Usuwamy pole pomocnicze
-            return najnowsza_zmiana
-        
-        return None
+            nowy_kapital = pozycja.get("wartosc")
+
+            # „Poprzednia” wartość – pozycja, której nrWpisuWykr == nasz nr_wprow
+            poprzednie = [x for x in historia_kapitalu if x.get("nrWpisuWykr") == str(nr)]
+            poprzedni_kapital = poprzednie[0].get("wartosc") if poprzednie else None
+
+            wyniki.append({
+                "nazwa": nazwa_firmy,
+                "krs": krs,
+                "data_zmiany": wpis["dataWpisu"],   # DD.MM.RRRR
+                "nowy_kapital": nowy_kapital,
+                "poprzedni_kapital": poprzedni_kapital,
+            })
+
+        # Sortujemy malejąco po dacie zmiany (najnowsze na górze)
+        wyniki.sort(
+            key=lambda z: datetime.strptime(z["data_zmiany"], "%d.%m.%Y"),
+            reverse=True
+        )
+        if not wyniki:
+            print("   -> są wpisy o kapitale, ale żaden nie mieści się w oknie 30 dni.")
+        return wyniki
 
     except Exception as e:
-        krs_dla_bledu = odpis.get('odpis', {}).get('naglowekP', {}).get('numerKRS', ' nieznany')
-        print(f"   -> ⚠️ Wystąpił krytyczny błąd podczas analizy KRS {krs_dla_bledu}: {e}")
-        return None
-def wyslij_email(tresc_raportu, odbiorcy):
-    """Ta funkcja jest odpowiedzialna za wysłanie gotowego raportu e-mailem."""
+        krs_bledu = odpis.get("odpis", {}).get("naglowekP", {}).get("numerKRS", "nieznany")
+        print(f"   -> ⚠️ Wystąpił błąd podczas analizy KRS {krs_bledu}: {e}")
+        return []
+
+# ------------------------------
+# BUDOWANIE RAPORTU TEKSTOWEGO
+# ------------------------------
+def zbuduj_tresc_raportu(zmiany: list[dict]) -> str:
+    """
+    Przyjmuje listę słowników (zmiany z wielu spółek) i składa ją w czytelną treść e-maila.
+    """
+    if not zmiany:
+        return "W badanym okresie nie odnotowano zmian kapitału zakładowego."
+
+    linie = ["Wykryto zmiany kapitału zakładowego w badanym okresie:\n"]
+    for z in zmiany:
+        linie.append(
+            f"- {z['nazwa']} (KRS {z['krs']}): "
+            f"{z.get('poprzedni_kapital', '–')} → {z['nowy_kapital']} "
+            f"dnia {z['data_zmiany']}"
+        )
+    return "\n".join(linie)
+
+# ------------------------------
+# WYSYŁKA E-MAIL
+# ------------------------------
+def wyslij_email_do_odbiorcow(tresc: str, odbiorcy: list[str]) -> bool:
+    """
+    Wysyła e-mail do wielu odbiorców (UDW). Wrażliwe dane (host, user, hasło)
+    pobieramy ze zmiennych środowiskowych.
+    Zwraca True przy sukcesie, False przy błędzie.
+    """
     if not odbiorcy:
-        print("Brak zdefiniowanych odbiorców. Pomijam wysyłanie e-maila.")
-        return
-    if not all([EMAIL_NADAWCY, HASLO_NADAWCY, SERWER_SMTP, PORT_SMTP]):
-        print("❌ BŁĄD: Brak pełnej konfiguracji e-mail. Sprawdź swoje sekrety na GitHubie.")
-        return
-    print(f"\n📧 Przygotowuję e-mail do wysłania do: {', '.join(odbiorcy)}...")
-    wiadomosc = MIMEMultipart("alternative")
-    wiadomosc["Subject"] = "Miesięczny raport zmian w kapitale zakładowym KRS"
-    wiadomosc["From"] = EMAIL_NADAWCY
-    wiadomosc["To"] = ", ".join(odbiorcy)
-    wiadomosc.attach(MIMEText(tresc_raportu, "plain", "utf-8"))
+        print("   -> ⚠️ Brak odbiorców – nie wysyłam e-maila.")
+        return False
+    if not (SMTP_HOST and SMTP_PORT and SMTP_USER and SMTP_PASS and EMAIL_FROM):
+        print("   -> ⚠️ Brak kompletu zmiennych SMTP – nie wysyłam e-maila.")
+        return False
+
+    msg = MIMEMultipart()
+    msg["From"] = EMAIL_FROM
+    msg["To"] = ", ".join(odbiorcy)  # adresy w polu 'Do:' (jeśli wolisz UDW – przenieś do BCC)
+    msg["Subject"] = EMAIL_SUBJECT
+
+    msg.attach(MIMEText(tresc, "plain", "utf-8"))
+
     try:
-        port = int(PORT_SMTP)
-        kontekst_ssl = ssl.create_default_context()
-        with smtplib.SMTP_SSL(SERWER_SMTP, port, context=kontekst_ssl) as serwer:
-            serwer.login(EMAIL_NADAWCY, HASLO_NADAWCY)
-            serwer.sendmail(EMAIL_NADAWCY, odbiorcy, wiadomosc.as_string())
-        print("✅ E-mail został wysłany pomyślnie!")
+        # Dwie ścieżki: SSL (465) lub STARTTLS (np. 587)
+        if SMTP_PORT == 465:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(EMAIL_FROM, odbiorcy, msg.as_string())
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                server.ehlo()
+                server.starttls(context=ssl.create_default_context())
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(EMAIL_FROM, odbiorcy, msg.as_string())
+
+        print(f"📨 Wysłano e-mail do {len(odbiorcy)} odbiorców.")
+        return True
     except Exception as e:
-        print(f"❌ Wystąpił błąd podczas wysyłania e-maila: {e}")
+        print(f"❌ Błąd wysyłki e-mail: {e}")
+        return False
 
-# ---------------------------------------------------------------------------
-# KROK 4: Główna funkcja wykonująca skrypt (uruchomienie)
-# ---------------------------------------------------------------------------
+# ------------------------------
+# GŁÓWNY PRZEBIEG
+# ------------------------------
 def main():
-    """Główna funkcja, która steruje całym procesem."""
     print("🚀 Start skryptu monitorującego zmiany w KRS.")
-    
-    lista_odbiorcow = wczytaj_odbiorcow_z_pliku()
-    if not lista_odbiorcow:
-        print("Brak zdefiniowanych odbiorców w pliku odbiorcy.txt. Kończę pracę.")
-        return
 
-    data_koncowa = datetime.now(timezone.utc).date()
-    data_poczatkowa = data_koncowa - timedelta(days=DNI_DO_SPRAWDZENIA - 1)
-    
-    lista_krs_do_sprawdzenia = wczytaj_liste_krs_z_pliku()
-    if not lista_krs_do_sprawdzenia:
-        print("🏁 Lista KRS do sprawdzenia jest pusta. Koniec pracy.")
-        return
-        
-    spolki_ze_zmiana_kapitalu = []
-    liczba_spolek_do_sprawdzenia = len(lista_krs_do_sprawdzenia)
-    
-    for i, krs in enumerate(lista_krs_do_sprawdzenia, 1):
-        print(f"🔎 Sprawdzam podmiot {i}/{liczba_spolek_do_sprawdzenia} (KRS: {krs})...")
-        odpis = pobierz_pelny_odpis(krs)
-        if odpis:
-            informacje_o_zmianie = przeanalizuj_odpis_pod_katem_zmiany_kapitalu(odpis, data_poczatkowa, data_koncowa)
-            if informacje_o_zmianie:
-                print(f"   -> ⭐ ZNALEZIONO ZMIANĘ KAPITAŁU dla {informacje_o_zmianie['nazwa']}!")
-                spolki_ze_zmiana_kapitalu.append(informacje_o_zmianie)
-        time.sleep(OPÓŹNIENIE_API)
+    odbiorcy = wczytaj_odbiorcow_z_pliku(PLIK_ODB)
+    krs_lista = wczytaj_krs_z_pliku(PLIK_KRS)
 
-    if spolki_ze_zmiana_kapitalu:
-        print(f"\n📊 Znaleziono {len(spolki_ze_zmiana_kapitalu)} spółek ze zmianą kapitału.")
-        linie_raportu = [
-            f"Raport zmian w kapitale zakładowym monitorowanych spółek w okresie od {data_poczatkowa.strftime('%d.%m.%Y')} do {data_koncowa.strftime('%d.%m.%Y')}.\n",
-            f"Znaleziono {len(spolki_ze_zmiana_kapitalu)} podmiotów:\n",
-            "--------------------------------------------------"
-        ]
-        for spolka in spolki_ze_zmiana_kapitalu:
-            linia = (
-                f"Nazwa: {spolka['nazwa']}\n"
-                f"KRS: {spolka['krs']}\n"
-                f"Data zmiany: {spolka['data_zmiany']}\n"
-                f"Poprzedni kapitał: {spolka['poprzedni_kapital']} PLN\n"
-                f"Nowy kapitał: {spolka['nowy_kapital']} PLN\n"
-                "--------------------------------------------------"
-            )
-            linie_raportu.append(linia)
-        tresc_raportu = "\n".join(linie_raportu)
-        wyslij_email(tresc_raportu, lista_odbiorcow)
+    # Ustalamy okno dat: [dzis - 30 dni, dzis]
+    dzis = dzis_w_warszawie()
+    data_od = dzis - timedelta(days=DNI_OKNA)
+    data_do = dzis
+    print(f"🗓️ Okno analizowane: {data_od.strftime('%d.%m.%Y')} – {data_do.strftime('%d.%m.%Y')}")
+
+    wszystkie_zmiany: list[dict] = []
+
+    for i, krs in enumerate(krs_lista, start=1):
+        print(f"🔎 Sprawdzam podmiot {i}/{len(krs_lista)} (KRS: {krs})...")
+        odpis = pobierz_pelny_odpis_json(krs)
+        if not odpis:
+            continue
+
+        zmiany = znajdz_zmiany_kapitalu_w_oknie(odpis, data_od, data_do)
+        if zmiany:
+            print(f"   -> ✅ Znaleziono {len(zmiany)} zmian(y) w oknie czasu.")
+            wszystkie_zmiany.extend(zmiany)
+        else:
+            print("   -> ℹ️ Brak zmian kapitału w oknie czasu.")
+
+        # Delikatny odstęp między zapytaniami, żeby nie „maltretować” API
+        time.sleep(0.4)
+
+    if wszystkie_zmiany:
+        # Grupowe zestawienie i e-mail
+        tresc = zbuduj_tresc_raportu(wszystkie_zmiany)
+        print("\n📋 Podsumowanie zmian:\n" + tresc + "\n")
+        wyslij_email_do_odbiorcow(tresc, odbiorcy)
     else:
         print("\n✅ Na Twojej liście nie znaleziono żadnych spółek ze zmianą kapitału zakładowego w badanym okresie.")
 
     print("🏁 Skrypt zakończył pracę.")
 
+# Uruchom tylko wtedy, gdy plik jest odpalany bezpośrednio (a nie importowany jako moduł)
 if __name__ == "__main__":
     main()
