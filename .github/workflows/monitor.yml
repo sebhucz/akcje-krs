@@ -1,35 +1,74 @@
-# Nazwa całego procesu (workflow)
-name: Tygodniowy monitoring KRS
+name: Monitor KRS – zmiany kapitału
 
-# Wyzwalacze (Triggers) - czyli kiedy ten proces ma się uruchomić
 on:
-  # Uruchomienie według harmonogramu (cron)
-  # Ta linijka oznacza "uruchom w każdą niedzielę o 23:00 czasu UTC"
-  schedule:
-    - cron: '0 23 * * 0'
-    
-  # Umożliwia również ręczne uruchomienie z poziomu zakładki "Actions" na GitHubie
+  # 1) Uruchom ręcznie z poziomu GitHuba (Run workflow)
   workflow_dispatch:
+  # 2) Harmonogram (cron działa w UTC!)
+  schedule:
+    - cron: "30 05 * * *"   # codziennie o 05:30 UTC (~06:30 zimą / ~07:30 latem w PL)
 
-# Definicja zadań (Jobs) do wykonania
+permissions:
+  contents: read
+
+concurrency:
+  group: monitor-krs
+  cancel-in-progress: false
+
 jobs:
-  build:
+  run-monitor:
     runs-on: ubuntu-latest
+
+    env:
+      # Sekcja ENV pobiera wartości z GitHub Secrets (ustaw je wcześniej w Settings → Secrets and variables → Actions)
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+
+      # (opcjonalnie) Jeżeli chcesz nadpisać liczbę dni okna bez zmiany kodu:
+      # DNI_OKNA: "30"
+
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v3
+      - name: Sprawdź repo
+        uses: actions/checkout@v4
+
+      - name: Skonfiguruj Pythona
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-      - name: Install dependencies
+          python-version: "3.11"
+
+      - name: Zainstaluj zależności
         run: |
           python -m pip install --upgrade pip
-          pip install requests
-      - name: Run script
-        # TA SEKCJA JEST KLUCZOWA!
-        env:
-          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-        run: python main.py # Albo nazwa Twojego pliku .py
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            # minimalny zestaw do działania
+            pip install requests
+          fi
+
+      - name: Pokaż wersje i obecne pliki
+        run: |
+          python --version
+          pip --version
+          ls -la
+          echo "-----"
+          echo "Zawartość plików wejściowych (jeśli istnieją):"
+          if [ -f krs_do_monitorowania.txt ]; then
+            echo "krs_do_monitorowania.txt:"
+            cat krs_do_monitorowania.txt
+          else
+            echo "Brak krs_do_monitorowania.txt"
+          fi
+          if [ -f odbiorcy.txt ]; then
+            echo "odbiorcy.txt:"
+            cat odbiorcy.txt
+          else
+            echo "Brak odbiorcy.txt"
+          fi
+
+      - name: Uruchom skrypt
+        run: |
+          set -euo pipefail
+          python main.py
