@@ -15,8 +15,8 @@ from email.mime.multipart import MIMEMultipart
 # ---------------------------------------------------------------------------
 # KROK 2: Główna konfiguracja skryptu
 # ---------------------------------------------------------------------------
-EMAIL_NADAWCY = os.environ.get("EMAIL_SENDER")
-HASLO_NADAWCY = os.environ.get("EMAIL_PASSWORD")
+EMAIL_SENDER = os.environ.get("EMAIL_SENDER")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
 SERWER_SMTP = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
 PORT_SMTP = int(os.environ.get("SMTP_PORT", 465))
 
