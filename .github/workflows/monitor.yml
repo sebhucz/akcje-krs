@@ -51,4 +51,22 @@ jobs:
         run: |
           python --version
           pip --version
-          ls
+          ls -la
+          echo "-----"
+          if [ -f krs_do_monitorowania.txt ]; then
+            echo "KRS-y: $(wc -l < krs_do_monitorowania.txt) szt."
+          else
+            echo "Brak krs_do_monitorowania.txt"
+          fi
+          if [ -f odbiorcy.txt ]; then
+            # NIE ujawniaj adresów: bez `cat`
+            echo "Odbiorców (z pliku): $(grep -c '@' odbiorcy.txt)"
+          else
+            echo "Brak odbiorcy.txt"
+          fi
+
+      - name: Uruchom skrypt
+        run: |
+          set -euo pipefail
+          python main.py
+
