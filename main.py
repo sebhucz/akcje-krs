@@ -18,7 +18,6 @@ from email.mime.multipart import MIMEMultipart
 # Odczytywanie konfiguracji e-mail z GitHub Secrets
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
-# ZMIANA: Usunęliśmy EMAIL_RECEIVER, ponieważ odbiorcy będą wczytywani z pliku.
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", 465))
 
@@ -44,12 +43,10 @@ def read_krs_list_from_file(filename="krs_do_monitorowania.txt"):
         print(f"❌ BŁĄD: Nie znaleziono pliku '{filename}'! Upewnij się, że plik istnieje w repozytorium.")
         return []
 
-# NOWA FUNKCJA: Wczytywanie listy odbiorców z pliku
 def read_recipients_from_file(filename="odbiorcy.txt"):
     """Wczytuje listę adresów e-mail odbiorców z pliku tekstowego."""
     try:
         with open(filename, 'r', encoding='utf-8') as f:
-            # Wczytujemy linie, które zawierają znak '@' i nie są puste
             recipients = [line.strip() for line in f if line.strip() and '@' in line]
         print(f"📧 Wczytano {len(recipients)} odbiorców z pliku '{filename}'.\n")
         return recipients
@@ -68,71 +65,68 @@ def get_full_record(krs_number):
         pass
     return None
 
-# NOWA, POPRAWIONA WERSJA FUNKCJI ANALIZUJĄCEJ
+# NOWA WERSJA FUNKCJI ANALIZUJĄCEJ - ZGODNA Z TWOJĄ LOGIKĄ
 def analyze_record_for_capital_change(record, start_date, end_date):
     """
-    Analizuje odpis w poszukiwaniu zmiany kapitału w zadanym okresie.
-    Ta wersja jest bardziej odporna na błędy i poprawnie odczytuje aktualne dane.
+    Analizuje odpis zgodnie z nową logiką: znajduje ostatni wpis i sprawdza,
+    czy dotyczył on zmiany kapitału.
     """
     try:
-        # Krok 1: Bezpieczne pobranie kluczowych danych historycznych
+        # Bezpieczne pobranie potrzebnych danych
+        entry_history = record.get('odpis', {}).get('naglowekP', {}).get('wpis', [])
         dane_dzial1 = record.get('dane', {}).get('dzial1', {})
         capital_history = dane_dzial1.get('kapital', {}).get('wysokoscKapitaluZakladowego', [])
-        name_history = dane_dzial1.get('danePodmiotu', {}).get('nazwa', [])
-        entry_history = record.get('odpis', {}).get('naglowekP', {}).get('wpis', [])
-
-        # Jeśli brakuje kluczowych informacji, nie kontynuuj analizy
-        if not all([capital_history, name_history, entry_history]):
-            return None
-
-        # Krok 2: Znajdź aktualny kapitał (ten, który nie ma numeru wykreślenia)
-        current_capital_info = next((c for c in capital_history if 'nrWpisuWykr' not in c), None)
-        if not current_capital_info:
-            return None
-
-        # Krok 3: Znajdź numer wpisu, który wprowadził tę zmianę kapitału
-        entry_number_of_change = int(current_capital_info.get('nrWpisuWprow', 0))
-        if entry_number_of_change == 0:
-            return None
-
-        # Krok 4: Na podstawie numeru wpisu, znajdź jego szczegóły, w tym datę
-        entry_details = next((e for e in entry_history if int(e.get('numerWpisu', -1)) == entry_number_of_change), None)
-        if not entry_details or 'dataWpisu' not in entry_details:
-            return None
-
-        # Krok 5: Sprawdź, czy data zmiany mieści się w monitorowanym okresie
-        date_of_change = datetime.strptime(entry_details['dataWpisu'], "%d.%m.%Y").date()
-        if not (start_date <= date_of_change <= end_date):
-            return None
-
-        # Krok 6: Jeśli data się zgadza, zbierz pozostałe informacje do raportu
         
-        # Poprawne wyszukiwanie aktualnej nazwy spółki
-        current_name_info = next((n for n in name_history if 'nrWpisuWykr' not in n), None)
-        company_name = current_name_info['nazwa'] if current_name_info else "Nie udało się ustalić nazwy"
+        if not entry_history:
+            return None
 
-        # Wyszukiwanie poprzedniego kapitału
-        previous_capital_info = next((c for c in capital_history if int(c.get('nrWpisuWykr', -1)) == entry_number_of_change), None)
-        previous_capital = previous_capital_info['wartosc'] if previous_capital_info else "Brak danych"
-            
-        # Zwróć kompletne i poprawne dane o zmianie
-        return {
-            "nazwa": company_name,
-            "krs": record.get('odpis', {}).get('naglowekP', {}).get('numerKRS'),
-            "data_zmiany": entry_details['dataWpisu'],
-            "nowy_kapital": current_capital_info.get('wartosc', 'Brak danych'),
-            "poprzedni_kapital": previous_capital
-        }
-            
+        # KROK 1: Znajdź ostatni wpis w historii spółki (o najwyższym numerze)
+        last_entry = max(entry_history, key=lambda e: int(e.get('numerWpisu', 0)))
+        last_entry_number = int(last_entry.get('numerWpisu', 0))
+
+        if last_entry_number == 0:
+            return None
+
+        # KROK 2: Sprawdź, czy data tego ostatniego wpisu mieści się w zadanym przedziale
+        date_of_change = datetime.strptime(last_entry['dataWpisu'], "%d.%m.%Y").date()
+
+        if not (start_date <= date_of_change <= end_date):
+            # Ostatnia zmiana jest poza naszym oknem czasowym, więc ją ignorujemy.
+            return None
+        
+        # KROK 3: Sprawdź, czy ostatni wpis faktycznie zmienił kapitał zakładowy
+        # Szukamy w historii kapitału wpisu, który został wprowadzony przez ten ostatni wpis z KRS.
+        capital_change_entry = next((
+            c for c in capital_history 
+            if int(c.get('nrWpisuWprow', -1)) == last_entry_number
+        ), None)
+
+        # KROK 4: Jeśli tak, zbierz dane do raportu. Jeśli nie, zignoruj.
+        if capital_change_entry:
+            # Sukces! Ostatnia zmiana dotyczyła kapitału. Zbieramy dane.
+            name_history = dane_dzial1.get('danePodmiotu', {}).get('nazwa', [])
+            current_name_info = next((n for n in name_history if 'nrWpisuWykr' not in n), None)
+            company_name = current_name_info['nazwa'] if current_name_info else "Nie udało się ustalić nazwy"
+
+            previous_capital_info = next((c for c in capital_history if int(c.get('nrWpisuWykr', -1)) == last_entry_number), None)
+            previous_capital = previous_capital_info['wartosc'] if previous_capital_info else "Brak danych"
+
+            return {
+                "nazwa": company_name,
+                "krs": record.get('odpis', {}).get('naglowekP', {}).get('numerKRS'),
+                "data_zmiany": last_entry['dataWpisu'],
+                "nowy_kapital": capital_change_entry.get('wartosc', 'Brak danych'),
+                "poprzedni_kapital": previous_capital
+            }
+
     except (KeyError, IndexError, TypeError, ValueError) as e:
-        # W razie nieoczekiwanego błędu, zapisz go w logu, zamiast ignorować
         krs_for_error = record.get('odpis', {}).get('naglowekP', {}).get('numerKRS', ' nieznany')
         print(f"   -> ⚠️ Wystąpił błąd podczas analizy KRS {krs_for_error}: {e}")
         return None
     
+    # Jeśli ostatni wpis nie dotyczył kapitału, funkcja kończy działanie tutaj
     return None
 
-# ZMIANA: Funkcja przyjmuje teraz listę odbiorców jako argument
 def send_email(report_body, recipients):
     """Wysyła raport e-mailem do podanej listy odbiorców."""
     if not recipients:
@@ -148,16 +142,15 @@ def send_email(report_body, recipients):
     print(f"\n📧 Przygotowuję e-mail do wysłania do: {', '.join(recipients)}...")
 
     message = MIMEMultipart("alternative")
-    message["Subject"] = "Tygodniowy raport zmian w kapitale zakładowym KRS"
+    message["Subject"] = "Miesięczny raport zmian w kapitale zakładowym KRS"
     message["From"] = EMAIL_SENDER
-    message["To"] = ", ".join(recipients) # Nagłówek 'To' zawiera listę
+    message["To"] = ", ".join(recipients)
 
     message.attach(MIMEText(report_body, "plain", "utf-8"))
     context = ssl.create_default_context()
     try:
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            # ZMIANA: Wysyłamy wiadomość do wszystkich odbiorców z listy
             server.sendmail(EMAIL_SENDER, recipients, message.as_string())
         print("✅ E-mail został wysłany pomyślnie!")
     except Exception as e:
@@ -166,12 +159,10 @@ def send_email(report_body, recipients):
 # ---------------------------------------------------------------------------
 # KROK 4: Główna funkcja wykonująca skrypt
 # ---------------------------------------------------------------------------
-
 def main():
     """Główna funkcja, która steruje całym procesem."""
     print("🚀 Start skryptu monitorującego zmiany w KRS.")
     
-    # ZMIANA: Na samym początku wczytujemy listę odbiorców
     recipients_list = read_recipients_from_file()
     if not recipients_list:
         print("Brak zdefiniowanych odbiorców w pliku odbiorcy.txt. Kończę pracę.")
@@ -216,12 +207,10 @@ def main():
             )
             report_lines.append(line)
         report_body = "\n".join(report_lines)
-        # ZMIANA: Przekazujemy listę odbiorców do funkcji wysyłającej e-mail
         send_email(report_body, recipients_list)
     else:
         print("\n✅ Na Twojej liście nie znaleziono żadnych spółek ze zmianą kapitału zakładowego w badanym okresie.")
-        # ZMIANA: Opcjonalne powiadomienie również jest wysyłane do całej listy
-        # report_text = "W ostatnim tygodniu nie odnotowano żadnych zmian w kapitale zakładowym na Twojej liście monitorowanych spółek."
+        # report_text = f"W okresie od {start_date.strftime('%d.%m.%Y')} do {end_date.strftime('%d.%m.%Y')} nie odnotowano żadnych zmian w kapitale zakładowym na Twojej liście monitorowanych spółek."
         # send_email(report_text, recipients_list)
 
     print("🏁 Skrypt zakończył pracę.")
