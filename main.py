@@ -27,7 +27,7 @@ API_BASE_URL = "https://api-krs.ms.gov.pl/api/krs"
 API_CALL_DELAY = 1
 
 # Ustawienia zakresu dat
-DAYS_TO_CHECK = 10
+DAYS_TO_CHECK = 30
 
 # ---------------------------------------------------------------------------
 # KROK 3: Definicje funkcji (logika skryptu)
