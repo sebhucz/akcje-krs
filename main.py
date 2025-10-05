@@ -7,7 +7,7 @@ Co robi?
 1) Wczytuje listę numerów KRS z pliku 'krs_do_monitorowania.txt'.
 2) Dla każdego KRS pobiera publiczny odpis JSON z API KRS.
 3) Analizuje pełny odpis: wyszukuje WSZYSTKIE zmiany kapitału zakładowego,
-   które zostały wprowadzone w ostatnich 30 dniach (liczone wg daty wpisu).
+   które zostały wprowadzone w ostatnich zadanych dniach (liczone wg daty wpisu).
 4) Jeśli znajdzie jakiekolwiek zmiany – buduje zbiorczy raport i wysyła go e-mailem
    do adresów z pliku 'odbiorcy.txt'.
 5) Czytelnie loguje przebieg działania (co sprawdza, co znalazł itp.).
