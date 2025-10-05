@@ -3,7 +3,8 @@ name: Monitor KRS – zmiany kapitału
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 05 * * *"   # codziennie o 05:30 UTC (~06:30 zimą / ~07:30 latem w PL)
+    - cron: "30 05 * * 1,3"  # poniedziałek i środa 05:30 UTC
+
 
 permissions:
   contents: read
