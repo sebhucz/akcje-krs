@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Skrypt: Monitor zmian kapitału zakładowego w KRS (okno: ostatnie 30 dni)
+Skrypt: Monitor zmian kapitału zakładowego w KRS (okno: ostatnie 14 dni)  - zmiana z 30. 14 dni, żeby dwa razy sprawdzić spółkę.
 Autor: (ja 😊)
 
 Co robi?
@@ -16,7 +16,7 @@ Wymagane biblioteki: requests
 
 Uwaga o datach:
 - API KRS zwraca daty wpisów w formacie DD.MM.RRRR (np. "16.09.2025").
-- Okno "ostatnie 30 dni" liczymy względem daty DZISIAJ w strefie Europe/Warsaw.
+- Okno "ostatnie 14 dni" liczymy względem daty DZISIAJ w strefie Europe/Warsaw.
 """
 
 import os
@@ -39,7 +39,7 @@ except Exception:
 # ------------------------------
 # KONFIGURACJA UŻYTKOWA (zmień w razie potrzeby)
 # ------------------------------
-DNI_OKNA = 30
+DNI_OKNA = 14
 PLIK_KRS = "krs_do_monitorowania.txt"
 PLIK_ODB = "odbiorcy.txt"
 API_ODPIS_URL = "https://api-krs.ms.gov.pl/api/krs/OdpisPelny/{krs}"  # {krs} podstawiamy numerem
